@@ -1,11 +1,12 @@
 from typing import Tuple
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
-from ray.rllib.utils.annotations import override, PublicAPI
-from ray.rllib.utils.typing import MultiAgentDict, AgentID
+from ray.rllib.utils.annotations import override
+from ray.rllib.utils.typing import MultiAgentDict
 import numpy as np
 import gym
 from Agent import Agent
 from GymInfo import Nothing, Collision, ReachGoal, Discomfort, Timeout
+import matplotlib.lines as mlines
 
 
 def generate_map(dims):
@@ -26,6 +27,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         # initialise vars
         self.map = None
         self.global_time = 0
+        self.history = np.zeros((self.time_limit + 1, self.num_agents, 3))
         obstacle_shape = (self.state_radius * 2 + 1, self.state_radius * 2 + 1)
         spaces = {
             'view': gym.spaces.Box(low=0, high=2, shape=obstacle_shape),
@@ -40,6 +42,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         # create agents
         self.agents = [Agent(id) for id in range(self.num_agents)]
 
+    # ------------- PUBLIC INTERFACE -------------------
     @override(MultiAgentEnv)
     def step(self, action_dict: MultiAgentDict) -> Tuple[
         MultiAgentDict, MultiAgentDict, MultiAgentDict, MultiAgentDict]:
@@ -50,6 +53,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
 
         done["__all__"] = sum([1 if a.done else 0 for a in self.agents]) == len(self.agents)
 
+        self._record_history()
         self.global_time += 1
 
         return obs, rew, done, info
@@ -60,29 +64,93 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         self.global_time = 0
 
         for agent in self.agents:
-            agent.reset(*self._generate_start_goal())
+            agent.reset(*self._generate_start_and_goal())
             self.map[tuple(agent.position)] = 2
 
         return {a.id: self._state_for_agent(a) for a in self.agents}
 
     @override(MultiAgentEnv)
-    def render(self, mode=None):
-        pass
+    def render(self, mode='video', output_file=None):
+        from matplotlib import animation
+        import matplotlib.pyplot as plt
+
+        cmap = plt.cm.get_cmap('hsv', len(self.agents) * 2)
+
+        fig, ax = plt.subplots(figsize=self.map_dim)
+        ax.tick_params(labelsize=12)
+        ax.set_xlim(-1, self.map_dim[0])
+        ax.set_ylim(-1, self.map_dim[1])
+        ax.set_xlabel('x(m)', fontsize=14)
+        ax.set_ylabel('y(m)', fontsize=14)
+
+        # add obstacle markers
+        obstacles = np.transpose((self.map == 1).nonzero())
+        for obstacle in obstacles:
+            marker = mlines.Line2D([obstacle[0]], [obstacle[1]],
+                                   color='k',
+                                   marker='s', linestyle='None', markersize=8)
+            ax.add_artist(marker)
+        # add start positions and goals
+        colors = [cmap(i) for i in range(len(self.agents))]
+        for i in range(len(self.agents)):
+            agent = self.agents[i]
+            agent_goal = mlines.Line2D([agent.goal[0]], [agent.goal[1]],
+                                       color=colors[i],
+                                       marker='*', linestyle='None', markersize=8)
+            ax.add_artist(agent_goal)
+            human_start = mlines.Line2D([agent.starting_pos[0]], [agent.starting_pos[1]],
+                                        color=colors[i],
+                                        marker='P', linestyle='None', markersize=8)
+            ax.add_artist(human_start)
+
+        # add agent positions and their numbers
+        agent_positions = [[(self.history[t, i, 0], self.history[t, i, 1]) for i in range(len(self.agents))] for t in
+                           range(self.time_limit)]
+        agents = [plt.Circle((agent_positions[0][i][0], agent_positions[0][i][1]), 1, fill=False, color=colors[i]) for i
+                  in range(len(self.agents))]
+
+        for i, agent in enumerate(agents):
+            ax.add_artist(agent)
+
+        # add time annotation
+        time = plt.text(0.4, 0.9, 'Time: {}'.format(0), fontsize=16, transform=ax.transAxes)
+        ax.add_artist(time)
+
+        global_step = 0
+
+        def update(frame_num):
+            nonlocal global_step
+            global_step = frame_num
+
+            for i, agent in enumerate(agents):
+                agent.center = (agent_positions[frame_num][i][0], agent_positions[frame_num][i][1])
+                if self.history[frame_num, i, 2] == 1:
+                    agent.fill = True
+            time.set_text('Time: {:.2f}'.format(frame_num * 1))
+
+        anim = animation.FuncAnimation(fig, update, frames=self.time_limit, interval=1 * 300)
+        anim.running = True
+
+        if output_file is not None:
+            # save as video
+            ffmpeg_writer = animation.FFMpegWriter(fps=10, metadata=dict(artist='Me'), bitrate=1800)
+            # writer = ffmpeg_writer(fps=10, metadata=dict(artist='Me'), bitrate=1800)
+            anim.save(output_file, writer=ffmpeg_writer)
+
+            # save output file as gif if imagemagic is installed
+            # anim.save(output_file, writer='imagemagic', fps=12)
+        else:
+            plt.show()
+
+    # ------------ MAP FUNCTIONS --------------------
 
     def _generate_new_map(self):
         self.map = generate_map(self.map_dim)
 
-    def _state_for_agent(self, agent):
-        return {"view": self._state_view(agent),
-                "goal_position": self._state_goal_position(agent)}
-
-    def _random_position(self):
-        return np.random.randint((0, 0), self.map_dim, (2))
-
     def _is_obstacle(self, pos):
         return self.map[tuple(pos)] == 1 or self.map[tuple(pos)] == 2
 
-    def _generate_start_goal(self):
+    def _generate_start_and_goal(self):
         starting_pos = self._random_position()
         # generate random positions until not an obstacle
         while self._is_obstacle(starting_pos):
@@ -96,6 +164,17 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         # todo : check if agents are too close when setting start
         # todo : minimum distance from goal for starting position?
         return starting_pos, goal_pos
+
+    def _random_position(self):
+        return np.random.randint((0, 0), self.map_dim, (2))
+
+    def _inside_map_boundaries(self, pos):
+        return 0 <= pos[0] < self.map_dim[0] and 0 <= pos[1] < self.map_dim[1]
+
+    # -------------- STATE FUNCTIONS -----------------
+    def _state_for_agent(self, agent):
+        return {"view": self._state_view(agent),
+                "goal_position": self._state_goal_position(agent)}
 
     def _state_view(self, agent):
         pos = agent.position
@@ -140,8 +219,13 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
     def _state_goal_position(self, agent):
         return agent.goal - agent.position
 
-    def _inside_map_boundaries(self, pos):
-        return 0 <= pos[0] < self.map_dim[0] and 0 <= pos[1] < self.map_dim[1]
+    # -------------- AGENT FUNCTION ------------------
+    def _record_history(self):
+        for i, agent in enumerate(self.agents):
+            self.history[self.global_time, i, 0] = agent.position[0]
+            self.history[self.global_time, i, 1] = agent.position[1]
+            if agent.done:
+                self.history[self.global_time, i, 2] = 1
 
     def _execute_agent_action(self, agent, action):
         target_pos = agent.preview_move(action)
@@ -155,7 +239,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
             return True
 
         # check for collision with another agent
-        if self.map[tuple(target_pos)] == 2:
+        if self.map[tuple(target_pos)] == 2 and not np.array_equal(action, np.array([0, 0])):
             return True
 
         # no collision -> move agent + update map
@@ -193,8 +277,9 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
 
             return self._state_for_agent(agent), reward, agent.done, info
         else:
-            self._state_for_agent(agent), 0, True, Nothing()
+            return self._state_for_agent(agent), 0, True, Nothing()
 
     def _testing_set_agent(self, agent):
         self.agents.append(agent)
         self.map[tuple(agent.position)] = 2
+        self.history = np.zeros((self.time_limit + 1, len(self.agents), 3))

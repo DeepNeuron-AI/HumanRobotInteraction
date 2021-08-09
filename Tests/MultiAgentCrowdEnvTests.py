@@ -7,27 +7,6 @@ import numpy as np
 
 class MultiAgentCrowdEnvTests(unittest.TestCase):
 
-    def _get_empty_env(self):
-        dims = (20, 20)
-        config = {"num_agents": 0,
-                  "state_radius": 4,
-                  "map_dim": dims,
-                  "time_limit": 500,
-                  "time_step_penalty": -1,
-                  "success_reward": 10,
-                  "collision_penalty": -10}
-        env = MultiAgentCrowdEnv(config)
-        map = np.zeros(dims)
-        env.map = map
-        return env
-
-    def _get_agent(self, pos, goal=None):
-        agent = Agent(0)
-        agent.position = np.array(pos)
-        if goal is not None:
-            agent.goal = np.array(goal)
-        return agent
-
     def test_agent_state_view_middle(self):
         # create Env
         env = self._get_empty_env()
@@ -106,10 +85,10 @@ class MultiAgentCrowdEnvTests(unittest.TestCase):
 
         # assert other agents visible
         X, Y = view.shape
-        agent_pos = [int(X/2), int(Y/2)]
+        agent_pos = [int(X / 2), int(Y / 2)]
         other_pos = []
         for x in (1, -1):
-            for y in (1,-1):
+            for y in (1, -1):
                 other_pos.append([agent_pos[0] + x, agent_pos[1] + y])
         for x, y in other_pos:
             self.assertTrue(view[x, y] == 2)
@@ -119,12 +98,12 @@ class MultiAgentCrowdEnvTests(unittest.TestCase):
         env = self._get_empty_env()
 
         # create Agent
-        agent = self._get_agent([10, 10], [0,0])
+        agent = self._get_agent([10, 10], [0, 0])
 
         # get state view
         gaol_pos = env._state_goal_position(agent)
 
-        self.assertTrue(np.array_equal(np.array([-10,-10]), gaol_pos))
+        self.assertTrue(np.array_equal(np.array([-10, -10]), gaol_pos))
 
     def test_step_outside_map(self):
         # create Env
@@ -135,7 +114,7 @@ class MultiAgentCrowdEnvTests(unittest.TestCase):
         env._testing_set_agent(agent)
 
         # get state view
-        obs, rew, done, info = env.step({0: np.array([-1,0])})
+        obs, rew, done, info = env.step({0: np.array([-1, 0])})
 
         self.assertTrue(done[0])
         self.assertEqual(str(info[0]), "Collision")
@@ -144,7 +123,7 @@ class MultiAgentCrowdEnvTests(unittest.TestCase):
     def test_step_into_obstacle(self):
         # create Env
         env = self._get_empty_env()
-        env.map[11,10] = 1
+        env.map[11, 10] = 1
 
         # create Agent
         agent = self._get_agent([10, 10])
@@ -162,7 +141,7 @@ class MultiAgentCrowdEnvTests(unittest.TestCase):
         env = self._get_empty_env()
 
         # create Agent
-        agent = self._get_agent([10, 10],[11,10])
+        agent = self._get_agent([10, 10], [11, 10])
         env._testing_set_agent(agent)
 
         # get state view
@@ -220,4 +199,54 @@ class MultiAgentCrowdEnvTests(unittest.TestCase):
         self.assertFalse(done[0])
         self.assertEqual(rew[0], env.time_step_penalty)
 
+    def _render_preview(self):
+        dims = (100, 100)
+        config = {"num_agents": 5,
+                  "state_radius": 4,
+                  "map_dim": dims,
+                  "time_limit": 50,
+                  "time_step_penalty": -1,
+                  "success_reward": 10,
+                  "collision_penalty": -10}
+        env = MultiAgentCrowdEnv(config)
 
+        env.reset()
+        map = np.zeros(dims)
+        map[9, 5] = 1
+        map[9, 14] = 1
+        map[9, 15] = 1
+        map[19, 5] = 1
+        map[14, 5] = 1
+        env.map = map
+        for e in range(50):
+            actions = {}
+            for i, agent in enumerate(env.agents):
+                a = env.action_space.sample()
+                actions[i] = a
+            obs, rew, done, info = env.step(actions)
+            g = 9
+
+        # env.render(output_file="test.mp4")
+        env.render()
+
+    def _get_empty_env(self):
+        dims = (20, 20)
+        config = {"num_agents": 0,
+                  "state_radius": 4,
+                  "map_dim": dims,
+                  "time_limit": 500,
+                  "time_step_penalty": -1,
+                  "success_reward": 10,
+                  "collision_penalty": -10}
+        env = MultiAgentCrowdEnv(config)
+        map = np.zeros(dims)
+        env.map = map
+        return env
+
+    def _get_agent(self, pos, goal=None):
+        agent = Agent(0)
+        agent.position = np.array(pos)
+        agent.starting_pos = np.array(pos)
+        if goal is not None:
+            agent.goal = np.array(goal)
+        return agent

@@ -6,6 +6,7 @@ class Agent:
         self.goal = np.array([0, 0])
         self.done = False
         self.id = id
+        self.starting_pos = np.array([0, 0])
 
     def preview_move(self, action):
         assert len(action) == 2
@@ -17,6 +18,7 @@ class Agent:
 
     def reset(self, starting_pos, goal_position):
         self.done = False
+        self.starting_pos = starting_pos.copy()
         self.position = starting_pos
         self.goal = goal_position
 
