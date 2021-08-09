@@ -37,7 +37,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         self.observation_space = gym.spaces.Dict(spaces)
 
         # action space is 2 numbers, -1, 0, 1 in x and y
-        self.action_space = gym.spaces.MultiDiscrete([3, 3])
+        self.action_space = gym.spaces.MultiDiscrete([(-1, 1), (-1, 1)])
 
         # create agents
         self.agents = [Agent(id) for id in range(self.num_agents)]
