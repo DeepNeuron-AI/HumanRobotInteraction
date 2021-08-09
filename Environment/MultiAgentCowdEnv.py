@@ -74,7 +74,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
 
     def _state_for_agent(self, agent):
         return {"view": self._state_view(agent),
-                "goal_position": self._state_start_goal(agent)}
+                "goal_position": self._state_goal_position(agent)}
 
     def _random_position(self):
         return np.random.randint((0, 0), self.map_dim, (2))
@@ -99,7 +99,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
 
     def _state_view(self, agent):
         pos = agent.position
-        obstacle_dims = self.state_radius * 2 + 1
+        view_dims = self.state_radius * 2 + 1
 
         # calculate x and y indexes of map section that is part of agents state
         x_start = int(max(0, pos[0] - self.state_radius))
@@ -110,30 +110,24 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         # cut out slice of map
         view = self.map[x_start:x_end, y_start:y_end].copy()
 
-        # add other agents in view -> no longer needed as map contains agents
-        # for other in self.agents:
-        #     if other.id != agent.id:
-        #         if x_start < other.position[0] < x_end and y_start < other.position[1] < y_end:
-        #             view[other.position[0] - x_start, other.position[1] - y_start] = 2
-
         # pad state with obstacles if outside of map
-        padded = np.ones((obstacle_dims, obstacle_dims))
-        pad_dims = [0, obstacle_dims, 0, obstacle_dims]  # xmin, xmax, ymin, ymax
+        padded = np.ones((view_dims, view_dims))
+        pad_dims = [0, view_dims, 0, view_dims]  # xmin, xmax, ymin, ymax
 
         # padding left
-        if x_start == 0 and view.shape[0] < obstacle_dims:
-            pad_dims[0] = obstacle_dims - view.shape[0]
+        if x_start == 0 and view.shape[0] < view_dims:
+            pad_dims[0] = view_dims - view.shape[0]
 
         # padding right
-        elif x_end == self.map_dim[0] and view.shape[0] < obstacle_dims:
+        elif x_end == self.map_dim[0] and view.shape[0] < view_dims:
             pad_dims[1] = view.shape[0]
 
         # padding bottom
-        if y_start == 0 and view.shape[1] < obstacle_dims:
-            pad_dims[2] = obstacle_dims - view.shape[1]
+        if y_start == 0 and view.shape[1] < view_dims:
+            pad_dims[2] = view_dims - view.shape[1]
 
         # padding right
-        elif y_end == self.map_dim[1] and view.shape[1] < obstacle_dims:
+        elif y_end == self.map_dim[1] and view.shape[1] < view_dims:
             pad_dims[3] = view.shape[1]
 
         # replace padded grid with state
@@ -143,7 +137,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         # todo: instead of 0,1,2 for state, should it be 1 hot encoded?
         return padded
 
-    def _state_start_goal(self, agent):
+    def _state_goal_position(self, agent):
         return agent.goal - agent.position
 
     def _inside_map_boundaries(self, pos):
@@ -161,7 +155,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
             return True
 
         # check for collision with another agent
-        if self.map[tuple(agent.position)] == 2:
+        if self.map[tuple(target_pos)] == 2:
             return True
 
         # no collision -> move agent + update map
@@ -200,3 +194,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
             return self._state_for_agent(agent), reward, agent.done, info
         else:
             self._state_for_agent(agent), 0, True, Nothing()
+
+    def _testing_set_agent(self, agent):
+        self.agents.append(agent)
+        self.map[tuple(agent.position)] = 2

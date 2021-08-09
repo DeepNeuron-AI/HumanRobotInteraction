@@ -35,4 +35,4 @@ class Nothing(object):
         pass
 
     def __str__(self):
-        return ''
+        return
