@@ -10,7 +10,7 @@ import matplotlib.lines as mlines
 
 
 def generate_map(dims):
-    return np.zeros(dims)
+    return np.zeros(dims,dtype=np.float32)
 
 
 class MultiAgentCrowdEnv(MultiAgentEnv):
@@ -23,6 +23,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         self.success_reward = config["success_reward"]
         self.time_step_penalty = config["time_step_penalty"]
         self.time_limit = config["time_limit"]
+        self.stop_on_collision = config["stop_on_collision"]
 
         # initialise vars
         self.map = None
@@ -31,7 +32,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         obstacle_shape = (self.state_radius * 2 + 1, self.state_radius * 2 + 1)
         spaces = {
             'view': gym.spaces.Box(low=0, high=2, shape=obstacle_shape),
-            'goal_position': gym.spaces.Box(low=np.array([0, 0]), high=np.array(self.map_dim))
+            'goal_position': gym.spaces.Box(low=np.array([-self.map_dim[0], -self.map_dim[1]]), high=np.array(self.map_dim))
         }
         # state is nearby spaces with 0 for empty, 1 for obstacle and 2 for other agent
         self.observation_space = gym.spaces.Dict(spaces)
@@ -190,7 +191,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         view = self.map[x_start:x_end, y_start:y_end].copy()
 
         # pad state with obstacles if outside of map
-        padded = np.ones((view_dims, view_dims))
+        padded = np.ones((view_dims, view_dims), dtype=np.float32)
         pad_dims = [0, view_dims, 0, view_dims]  # xmin, xmax, ymin, ymax
 
         # padding left
@@ -217,7 +218,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         return padded
 
     def _state_goal_position(self, agent):
-        return agent.goal - agent.position
+        return (agent.goal - agent.position).astype(dtype=np.float32)
 
     # -------------- AGENT FUNCTION ------------------
     def _record_history(self):
@@ -226,8 +227,12 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
             self.history[self.global_time, i, 1] = agent.position[1]
             if agent.done:
                 self.history[self.global_time, i, 2] = 1
+    def _handle_discrete_action(self, action):
+        actions = [-1,0,1]
+        return np.array([actions[action[0]], actions[action[1]]])
 
     def _execute_agent_action(self, agent, action):
+        action = self._handle_discrete_action(action)
         target_pos = agent.preview_move(action)
 
         # check for collision when pos outside of map
@@ -259,7 +264,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
                 info = Timeout()
             elif collision:
                 reward = self.collision_penalty
-                agent.done = True
+                agent.done = self.stop_on_collision
                 info = Collision()
 
             elif agent.reached_goal():
@@ -272,6 +277,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
             #     done = False
             #     info = Discomfort(dmin)
             else:
+                # reward = -np.linalg.norm(agent.goal-agent.position)
                 reward = self.time_step_penalty
                 info = Nothing()
 
