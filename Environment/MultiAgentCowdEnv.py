@@ -10,7 +10,7 @@ import matplotlib.lines as mlines
 
 
 def generate_map(dims):
-    return np.zeros(dims,dtype=np.float32)
+    return np.zeros(dims, dtype=np.float32)
 
 
 class MultiAgentCrowdEnv(MultiAgentEnv):
@@ -24,23 +24,42 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         self.time_step_penalty = config["time_step_penalty"]
         self.time_limit = config["time_limit"]
         self.stop_on_collision = config["stop_on_collision"]
+        self.output_shared_state_and_actions = config["output_shared_state_and_actions"]
 
         # initialise vars
         self.map = None
         self.global_time = 0
         self.history = np.zeros((self.time_limit + 1, self.num_agents, 3))
-        obstacle_shape = (self.state_radius * 2 + 1, self.state_radius * 2 + 1)
-        spaces = {
-            'view': gym.spaces.Box(low=0, high=2, shape=obstacle_shape),
-            'goal_position': gym.spaces.Box(low=np.array([-self.map_dim[0], -self.map_dim[1]]), high=np.array(self.map_dim))
-        }
-        # state is nearby spaces with 0 for empty, 1 for obstacle and 2 for other agent
-        self.observation_space = gym.spaces.Dict(spaces)
 
-        # action space is 2 numbers, -1, 0, 1 in x and y
-        self.action_space = gym.spaces.MultiDiscrete([3, 3])
+        # observation space = flattened radius of nearby squares + distance to goal
+        obs_dim = self.state_radius * 2 + 1
+        self.obs_dim = obs_dim
+        own_observation_space = gym.spaces.Box(low=-max(self.map_dim),
+                                               high=max(self.map_dim),
+                                               shape=(1, obs_dim * obs_dim + 2))
 
-        # create agents
+        # use shared obs and actions for multi agent
+        if self.output_shared_state_and_actions:
+            self._initialise_shared_spaces()
+
+            shared_observation_space = gym.spaces.Box(low=-max(self.map_dim),
+                                                      high=max(self.map_dim),
+                                                      shape=(self.num_agents, obs_dim * obs_dim + 2))
+            shared_action_space = gym.spaces.Box(low=0, high=9, shape=(self.num_agents, 1))
+
+            self.observation_space = gym.spaces.Dict({
+                "own_obs": own_observation_space,
+                "shared_obs": shared_observation_space,
+                "shared_action": shared_action_space,
+            })
+
+        # or only local view for regular rl
+        else:
+            self.observation_space = own_observation_space
+
+        # ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0), (0, 1), (1, -1), (1, 0), (1, 1))
+        self.action_space = gym.spaces.Discrete(9)
+
         self.agents = [Agent(id) for id in range(self.num_agents)]
 
     # ------------- PUBLIC INTERFACE -------------------
@@ -48,6 +67,8 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
     def step(self, action_dict: MultiAgentDict) -> Tuple[
         MultiAgentDict, MultiAgentDict, MultiAgentDict, MultiAgentDict]:
 
+        if self.output_shared_state_and_actions:
+            self._initialise_shared_spaces()
         obs, rew, done, info = {}, {}, {}, {}
         for i, action in action_dict.items():
             obs[i], rew[i], done[i], info[i] = self._step_for_agent(self.agents[i], action)
@@ -63,6 +84,9 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
     def reset(self) -> MultiAgentDict:
         self._generate_new_map()
         self.global_time = 0
+
+        if self.output_shared_state_and_actions:
+            self._initialise_shared_spaces()
 
         for agent in self.agents:
             agent.reset(*self._generate_start_and_goal())
@@ -174,8 +198,24 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
 
     # -------------- STATE FUNCTIONS -----------------
     def _state_for_agent(self, agent):
-        return {"view": self._state_view(agent),
-                "goal_position": self._state_goal_position(agent)}
+        # calculate own observation
+        view = self._state_view(agent)
+        goal = self._state_goal_position(agent)
+        own_obs = np.expand_dims(np.concatenate((view.flatten(), goal)), axis=0)
+
+        if self.output_shared_state_and_actions:
+            # add to shared observations
+            self.shared_obs[agent.id, :] = own_obs
+
+            return {"own_obs": own_obs,
+                    "shared_obs": self.shared_obs,
+                    "shared_action": self.shared_actions}
+        else:
+            return own_obs
+
+    def _initialise_shared_spaces(self):
+        self.shared_obs = np.zeros((self.num_agents, self.obs_dim * self.obs_dim + 2), dtype=np.float32)
+        self.shared_actions = np.zeros((self.num_agents, 1), dtype=np.float32)
 
     def _state_view(self, agent):
         pos = agent.position
@@ -227,9 +267,14 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
             self.history[self.global_time, i, 1] = agent.position[1]
             if agent.done:
                 self.history[self.global_time, i, 2] = 1
+
     def _handle_discrete_action(self, action):
-        actions = [-1,0,1]
-        return np.array([actions[action[0]], actions[action[1]]])
+        actions = []
+        values = (-1, 0, 1)
+        for x in values:
+            for y in values:
+                actions.append([x, y])
+        return np.array(actions[action])
 
     def _execute_agent_action(self, agent, action):
         action = self._handle_discrete_action(action)
@@ -255,6 +300,10 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         return False
 
     def _step_for_agent(self, agent, action):
+
+        if self.output_shared_state_and_actions:
+            self.shared_actions[agent.id] = action
+
         if not agent.done:
             collision = self._execute_agent_action(agent, action)
 
