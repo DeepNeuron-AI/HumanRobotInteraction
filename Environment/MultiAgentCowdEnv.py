@@ -8,7 +8,6 @@ from Agent import Agent
 from GymInfo import Nothing, Collision, ReachGoal, Discomfort, Timeout
 import matplotlib.lines as mlines
 
-
 def generate_map(dims):
     return np.zeros(dims, dtype=np.float32)
 
@@ -29,7 +28,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         # initialise vars
         self.map = None
         self.global_time = 0
-        self.history = np.zeros((self.time_limit + 1, self.num_agents, 3))
+        self._reset_history()
 
         # observation space = flattened radius of nearby squares + distance to goal
         obs_dim = self.state_radius * 2 + 1
@@ -83,6 +82,7 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
     @override(MultiAgentEnv)
     def reset(self) -> MultiAgentDict:
         self._generate_new_map()
+        self._reset_history()
         self.global_time = 0
 
         if self.output_shared_state_and_actions:
@@ -96,12 +96,16 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
 
     @override(MultiAgentEnv)
     def render(self, mode='video', output_file=None):
+        # only render once all agents are done
+        if sum([1 if a.done else 0 for a in self.agents]) != self.num_agents:
+            return
+
         from matplotlib import animation
         import matplotlib.pyplot as plt
 
         cmap = plt.cm.get_cmap('hsv', len(self.agents) * 2)
 
-        fig, ax = plt.subplots(figsize=self.map_dim)
+        fig, ax = plt.subplots(figsize=(9,9))
         ax.tick_params(labelsize=12)
         ax.set_xlim(-1, self.map_dim[0])
         ax.set_ylim(-1, self.map_dim[1])
@@ -131,7 +135,8 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         # add agent positions and their numbers
         agent_positions = [[(self.history[t, i, 0], self.history[t, i, 1]) for i in range(len(self.agents))] for t in
                            range(self.time_limit)]
-        agents = [plt.Circle((agent_positions[0][i][0], agent_positions[0][i][1]), 1, fill=False, color=colors[i]) for i
+        agent_width = max(self.map_dim) / 100
+        agents = [plt.Circle((agent_positions[0][i][0], agent_positions[0][i][1]), agent_width , fill=False, color=colors[i]) for i
                   in range(len(self.agents))]
 
         for i, agent in enumerate(agents):
@@ -149,11 +154,13 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
 
             for i, agent in enumerate(agents):
                 agent.center = (agent_positions[frame_num][i][0], agent_positions[frame_num][i][1])
-                if self.history[frame_num, i, 2] == 1:
+                if self.history[frame_num, i, 2] > 0:
                     agent.fill = True
+                    if self.history[frame_num, i, 2] == 1:
+                        agent.set_color('k')
             time.set_text('Time: {:.2f}'.format(frame_num * 1))
 
-        anim = animation.FuncAnimation(fig, update, frames=self.time_limit, interval=1 * 300)
+        anim = animation.FuncAnimation(fig, update, frames=self.global_time, interval=1 * 230)
         anim.running = True
 
         if output_file is not None:
@@ -261,12 +268,18 @@ class MultiAgentCrowdEnv(MultiAgentEnv):
         return (agent.goal - agent.position).astype(dtype=np.float32)
 
     # -------------- AGENT FUNCTION ------------------
+
+    def _reset_history(self):
+        self.history = np.zeros((self.time_limit + 1, self.num_agents, 3))
+
     def _record_history(self):
         for i, agent in enumerate(self.agents):
             self.history[self.global_time, i, 0] = agent.position[0]
             self.history[self.global_time, i, 1] = agent.position[1]
             if agent.done:
                 self.history[self.global_time, i, 2] = 1
+                if np.array_equal(agent.position,agent.goal):
+                    self.history[self.global_time, i, 2] = 2
 
     def _handle_discrete_action(self, action):
         actions = []

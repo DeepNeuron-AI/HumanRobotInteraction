@@ -1,6 +1,7 @@
 from Environment.MultiAgentCowdEnv import MultiAgentCrowdEnv
 import random
 from ray import tune
+from ray.tune.integration.wandb import WandbLoggerCallback
 
 # Params config
 LOG_DIR_NAME = "A2C"
@@ -37,13 +38,13 @@ config = {
         "policy_mapping_fn":
             lambda agent_id: random.choice([str(i) for i in range(NUM_AGENTS)])
     },
-    # "evaluation_interval": 2,
-    # "evaluation_num_episodes": 1,
-    # "evaluation_num_workers": 1,
-    # "evaluation_config": {
-    #     "record_env": True,
-    #     "render_env": True,
-    # },
+    "evaluation_interval": 2,
+    "evaluation_num_episodes": 1,
+    "evaluation_num_workers": 1,
+    "evaluation_config": {
+        "record_env": True,
+        "render_env": True,
+    },
     "framework": FRAMEWORK,
 }
 stop = {
@@ -52,4 +53,6 @@ stop = {
     "training_iteration": STOP_ITERS,
 }
 
-results = tune.run(ALGORITHM, name=LOG_DIR_NAME, stop=stop, config=config, verbose=1)
+# callbacks = [WandbLoggerCallback(project="Hri", api_key="ceb8d4ecf459f66ca402d1515a3df16ba5debf31", log_config=True)]
+callbacks = []
+results = tune.run(ALGORITHM, name=LOG_DIR_NAME, stop=stop, config=config, verbose=1, callbacks=callbacks)

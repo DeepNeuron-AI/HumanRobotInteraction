@@ -3,6 +3,7 @@ from ray.rllib.models import ModelCatalog
 from Environment.MultiAgentCowdEnv import MultiAgentCrowdEnv
 from ray import tune
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
+from ray.tune.integration.wandb import WandbLoggerCallback
 from ray.rllib.models.torch.fcnet import FullyConnectedNetwork as TorchFC
 from ray.rllib.utils.framework import try_import_torch
 import gym
@@ -10,6 +11,8 @@ import gym
 torch, nn = try_import_torch()
 
 # Params config
+PLOT = True
+WANDB = False
 LOG_DIR_NAME = "A2C"
 ALGORITHM = "A2C"
 NUM_AGENTS = 6
@@ -76,14 +79,21 @@ ModelCatalog.register_custom_model("centralized_critic_crowd_nav", CentralizedCr
 config = {
     "env": MultiAgentCrowdEnv,
     "env_config": config,
-    "no_done_at_end": True,
+    #"no_done_at_end": True,
     "batch_mode": "complete_episodes",
     "num_gpus": int(os.environ.get("RLLIB_NUM_GPUS", "0")),
     "multiagent": {
         "policies": {
-            str(i) : (None, env.observation_space, env.action_space, {}) for i in range(NUM_AGENTS)
+            str(i): (None, env.observation_space, env.action_space, {}) for i in range(NUM_AGENTS)
         },
         "policy_mapping_fn": (lambda aid, **kwargs: str(aid)),
+    },
+    "evaluation_interval": 20,
+    "evaluation_num_episodes": 1,
+    "evaluation_num_workers": 1,
+    "evaluation_config": {
+        "record_env": True,
+        "render_env": True,
     },
     "model": {
         "custom_model": "centralized_critic_crowd_nav",
@@ -97,4 +107,12 @@ stop = {
     "training_iteration": STOP_ITERS,
 }
 
-results = tune.run(ALGORITHM, name=LOG_DIR_NAME, config=config, stop=stop, verbose=1)
+callbacks = []
+if WANDB:
+    callbacks = [WandbLoggerCallback(project="Hri", api_key="ceb8d4ecf459f66ca402d1515a3df16ba5debf31", log_config=True)]
+results = tune.run(ALGORITHM,
+                   name=LOG_DIR_NAME,
+                   config=config,
+                   stop=stop,
+                   verbose=1,
+                   callbacks=callbacks)
